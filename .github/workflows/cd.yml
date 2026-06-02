@@ -1,0 +1,45 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    env:
+      FORGE_WEBHOOK_URL: ${{ secrets.FORGE_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # --- FORGE DEPLOYMENT OPTION ---
+      # Trigger a zero-downtime deploy via Forge Webhook if configured
+      - name: Trigger Laravel Forge Deploy
+        if: env.FORGE_WEBHOOK_URL != ''
+        run: curl -X POST "$FORGE_WEBHOOK_URL"
+
+      # --- ENVOY DEPLOYMENT FALLBACK ---
+      # Executes Envoy script if Forge webhook is unavailable
+      - name: Setup PHP for Envoy
+        if: env.FORGE_WEBHOOK_URL == ''
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          tools: composer:v2
+
+      - name: Install Envoy Global
+        if: env.FORGE_WEBHOOK_URL == ''
+        run: composer global require laravel/envoy
+
+      - name: Run Envoy Deploy
+        if: env.FORGE_WEBHOOK_URL == ''
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          echo "$DEPLOY_SSH_KEY" > deploy_key
+          chmod 600 deploy_key
+          ~/.composer/vendor/bin/envoy run deploy --server="production"
