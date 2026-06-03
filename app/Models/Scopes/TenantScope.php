@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models\Scopes;
 
 use Illuminate\Database\Eloquent\Builder;
@@ -11,9 +13,18 @@ class TenantScope implements Scope
 {
     public function apply(Builder $query, Model $model): void
     {
-        // If an authenticated user exists (merchant, driver, admin), automatically scope queries to their assigned tenant ID
-        if (Auth::check() && Auth::user()->tenant_id) {
-            $query->where($model->getTable().'.tenant_id', Auth::user()->tenant_id);
+        if (! Auth::check()) {
+            return;
         }
+
+        $tenantId = Auth::user()->tenant_id;
+
+        if (! $tenantId) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $query->where($model->getTable().'.tenant_id', $tenantId);
     }
 }

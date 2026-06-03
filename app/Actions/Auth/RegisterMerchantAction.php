@@ -1,59 +1,56 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Actions\Auth;
 
+use App\DataTransferObjects\MerchantRegistrationData;
 use App\Enums\Permission;
+use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
-class RegisterMerchantAction
+final readonly class RegisterMerchantAction
 {
-    public function execute(array $data): User
+    public function execute(MerchantRegistrationData $data): User
     {
-        return DB::transaction(function () use ($data) {
+        return DB::transaction(function () use ($data): User {
+            $tenant = Tenant::query()
+                ->where('subdomain', $data->tenantSubdomain)
+                ->firstOrFail();
 
             $exists = User::withoutGlobalScopes()
-
-                ->where(function ($query) use ($data) {
-                    $query->where('email', $data['email'])
-
-                        ->orWhere('phone', $data['phone']);
-                })->exists();
+                ->where(function ($query) use ($data): void {
+                    $query->where('email', $data->email)
+                        ->orWhere('phone', $data->phone);
+                })
+                ->exists();
 
             if ($exists) {
                 throw ValidationException::withMessages([
                     'email' => 'This merchant email or phone is already registered.',
-
                 ]);
             }
 
-            // 1. Create the user account with the merchant's default bitmask injection (CREATE_SHIPMENT | VIEW_SHIPMENT)
+            $user = User::provision(
+                attributes: [
+                    'name' => $data->name,
+                    'email' => $data->email,
+                    'phone' => $data->phone,
+                    'password' => $data->password,
+                    'status' => 'active',
+                ],
+                tenantId: $tenant->id,
+                permissionsMask: Permission::merchantDefault(),
+            );
 
-            $user = User::create([
-                'tenant_id' => $data['tenant_id'],
-
-                'name' => $data['name'],
-
-                'email' => $data['email'],
-
-                'phone' => $data['phone'],
-
-                'password' => Hash::make($data['password']),
-
-                'permissions_mask' => Permission::merchantDefault(), // Value: 3 (binary: 000011)
-
-                'status' => 'active',
+            $profile = $user->merchantProfile()->make([
+                'store_name' => $data->storeName,
+                'pickup_address' => $data->pickupAddress,
             ]);
-
-            // 2. Create the merchant's store profile to specify their warehouse address
-            $user->merchantProfile()->create([
-                'store_name' => $data['store_name'],
-
-                'pickup_address' => $data['pickup_address'],
-
-            ]);
+            $profile->forceFill(['tenant_id' => $tenant->id]);
+            $user->merchantProfile()->save($profile);
 
             return $user;
         });

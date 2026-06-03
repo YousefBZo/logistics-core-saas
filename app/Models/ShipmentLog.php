@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use App\Models\Scopes\TenantScope;
@@ -13,7 +15,19 @@ class ShipmentLog extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id'];
+    protected $fillable = [
+        'tenant_id',
+        'shipment_id',
+        'user_id',
+        'status_from',
+        'status_to',
+        'comment',
+    ];
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
+    }
 
     public function shipment(): BelongsTo
     {

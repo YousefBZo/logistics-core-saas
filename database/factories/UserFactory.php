@@ -1,29 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Factories;
 
 use App\Enums\Permission;
 use App\Models\Tenant;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
-/**
- * @extends Factory<User>
- */
+/** @extends Factory<User> */
 class UserFactory extends Factory
 {
-    /**
-     * The current password being used by the factory.
-     */
     protected static ?string $password;
 
-    /**
-     * Define the model's default state.
-     *
-     * @return array<string, mixed>
-     */
     public function definition(): array
     {
         return [
@@ -38,32 +32,28 @@ class UserFactory extends Factory
         ];
     }
 
-    /**
-     * Assign tenant-administrator permissions.
-     */
+    public function create($attributes = [], $parent = null): Model|EloquentCollection
+    {
+        return User::unguarded(fn (): Model|EloquentCollection => parent::create($attributes, $parent));
+    }
+
     public function admin(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn (array $attributes): array => [
             'permissions_mask' => Permission::MANAGE_TENANT->value,
         ]);
     }
 
-    /**
-     * Assign the default merchant logistics permissions.
-     */
     public function merchant(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn (array $attributes): array => [
             'permissions_mask' => Permission::merchantDefault(),
         ]);
     }
 
-    /**
-     * Mark the user as suspended for authentication checks.
-     */
     public function suspended(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn (array $attributes): array => [
             'status' => 'suspended',
         ]);
     }

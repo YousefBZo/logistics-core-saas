@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use App\Models\Scopes\TenantScope;
@@ -14,7 +16,24 @@ class Shipment extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id']; // Protect the primary key, leaving the remaining payload mass-assignable via dedicated Actions later
+    protected $fillable = [
+        'tenant_id',
+        'merchant_id',
+        'warehouse_id',
+        'tracking_number',
+        'status',
+        'customer_name',
+        'customer_phone',
+        'city',
+        'area_or_zone',
+        'detailed_address',
+        'customer_latitude',
+        'customer_longitude',
+        'cod_amount',
+        'delivery_fees',
+        'weight_kg',
+        'notes',
+    ];
 
     public function tenant(): BelongsTo
     {
@@ -39,5 +58,10 @@ class Shipment extends Model
     public function logs(): HasMany
     {
         return $this->hasMany(ShipmentLog::class)->orderBy('created_at', 'desc');
+    }
+
+    public function assignDriver(int $driverId): void
+    {
+        $this->forceFill(['driver_id' => $driverId])->save();
     }
 }
