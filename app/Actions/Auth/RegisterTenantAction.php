@@ -1,43 +1,36 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Actions\Auth;
 
+use App\DataTransferObjects\TenantRegistrationData;
 use App\Enums\Permission;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 
-class RegisterTenantAction
+final readonly class RegisterTenantAction
 {
-    public function execute(array $data): User
+    public function execute(TenantRegistrationData $data): User
     {
-        return DB::transaction(function () use ($data) {
-
+        return DB::transaction(function () use ($data): User {
             $tenant = Tenant::create([
-                'company_name' => $data['company_name'],
-
-                'subdomain' => strtolower($data['subdomain']),
-
+                'company_name' => $data->companyName,
+                'subdomain' => $data->subdomain,
             ]);
 
-            // 2. Create the overall admin account and activate the highest mathematical bit MANAGE_TENANT
-
-            return User::create([
-                'tenant_id' => $tenant->id,
-
-                'name' => $data['name'],
-
-                'email' => $data['email'],
-
-                'phone' => $data['phone'],
-
-                'password' => Hash::make($data['password']),
-
-                'permissions_mask' => Permission::MANAGE_TENANT->value, // Value: 32 (binary: 100000)
-
-                'status' => 'active',
-            ]);
+            return User::provision(
+                attributes: [
+                    'name' => $data->name,
+                    'email' => $data->email,
+                    'phone' => $data->phone,
+                    'password' => $data->password,
+                    'status' => 'active',
+                ],
+                tenantId: $tenant->id,
+                permissionsMask: Permission::MANAGE_TENANT->value,
+            );
         });
     }
 }

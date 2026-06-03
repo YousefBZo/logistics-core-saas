@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use App\Models\Scopes\TenantScope;
@@ -14,7 +16,7 @@ class Warehouse extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id'];
+    protected $fillable = ['tenant_id', 'name', 'city', 'address_details'];
 
     public function tenant(): BelongsTo
     {

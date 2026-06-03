@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Enums;
 
 enum Permission: int
@@ -26,5 +28,16 @@ enum Permission: int
     public static function warehouseDefault(): int
     {
         return self::VIEW_SHIPMENT->value | self::SORT_PACKAGES->value; // 2 | 4 = 6
+    }
+
+    public static function resolveRouteName(string $name): ?self
+    {
+        foreach (self::cases() as $case) {
+            if ($case->name === $name) {
+                return $case;
+            }
+        }
+
+        return null;
     }
 }

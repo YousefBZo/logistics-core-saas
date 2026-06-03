@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Middleware;
 
 use App\Enums\Permission;
@@ -14,7 +16,7 @@ class CheckPermission
 
      *
      * @param  Closure(Request): (Response)  $next
-     * @param  string  $permissionName  The permission name coming from the route (e.g., CREATE_SHIPMENT)
+     * @param  string  $permissionName  The permission name or numeric mask coming from the route (e.g., CREATE_SHIPMENT or 32)
      */
     public function handle(Request $request, Closure $next, string $permissionName): Response
     {
@@ -26,13 +28,27 @@ class CheckPermission
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
+        if (ctype_digit($permissionName)) {
+            $permissionMask = (int) $permissionName;
+
+            if ($permissionMask <= 0) {
+                return response()->json(['message' => "Developer Error: Permission mask '{$permissionName}' is invalid."], 500);
+            }
+
+            if (($user->permissions_mask & $permissionMask) !== $permissionMask) {
+                return response()->json([
+                    'message' => 'Access Denied: You do not have the algebraic clearance for this logistics action.',
+                ], 403);
+            }
+
+            return $next($request);
+        }
+
         // 2. Attempt to match the incoming text with our mathematical Enum
 
-        try {
-            $permission = constant("App\Enums\Permission::$permissionName");
-        } catch (\Error $e) {
-            // Developer protection: If the developer enters an incorrect permission name in the Route, the system will immediately alert them
+        $permission = Permission::resolveRouteName($permissionName);
 
+        if ($permission === null) {
             return response()->json(['message' => "Developer Error: Permission '{$permissionName}' does not exist."], 500);
         }
 
