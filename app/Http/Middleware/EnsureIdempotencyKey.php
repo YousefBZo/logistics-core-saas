@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Middleware;
 
 use Closure;
+use Illuminate\Cache\Repository;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\Response;
@@ -31,11 +33,13 @@ final class EnsureIdempotencyKey
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        /** @var Repository $cache */
         $cache = Cache::store(config('idempotency.store', 'redis'));
         $requestHash = hash('sha256', $request->getContent());
-        $responseKey = 'idempotency:response:'.$this->cacheFingerprint($request, $idempotencyKey);
-        $lock = $cache->lock(
-            'idempotency:lock:'.$this->cacheFingerprint($request, $idempotencyKey),
+        $fingerprint = $this->cacheFingerprint($request, $idempotencyKey);
+        $responseKey = 'idempotency:response:'.$fingerprint;
+        $lock = $this->resolveLockProvider($cache)->lock(
+            'idempotency:lock:'.$fingerprint,
             (int) config('idempotency.lock_seconds', 30)
         );
 
@@ -72,11 +76,24 @@ final class EnsureIdempotencyKey
         }
     }
 
+    private function resolveLockProvider(Repository $cache): LockProvider
+    {
+        $store = $cache->getStore();
+
+        if (! $store instanceof LockProvider) {
+            throw new \RuntimeException('Configured idempotency cache store does not support atomic locks.');
+        }
+
+        return $store;
+    }
+
     private function cacheFingerprint(Request $request, string $idempotencyKey): string
     {
+        $user = $request->user();
+
         return hash('sha256', implode('|', [
-            $request->user()?->tenant_id ?? 'guest',
-            $request->user()?->id ?? 'guest',
+            $user === null ? 'guest' : (string) $user->tenant_id,
+            $user === null ? 'guest' : (string) $user->id,
             $request->method(),
             $request->path(),
             $idempotencyKey,
