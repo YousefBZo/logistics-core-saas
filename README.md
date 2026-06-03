@@ -4,18 +4,20 @@ Logistics Core SaaS is a Laravel backend foundation for multi-tenant delivery, m
 
 ## Project Strengths
 
-- **Clean architecture first:** core authentication operations are isolated in action classes instead of fat controllers.
-- **Multi-tenant database design:** tenants own users, warehouses, shipments, and related operational data.
-- **Tenant data isolation:** scoped Eloquent models automatically restrict authenticated queries to the current tenant.
+- **Clean architecture first:** business logic lives in action classes with immutable DTOs, not fat controllers or models.
+- **Multi-tenant database design:** tenants own users, warehouses, shipments, merchant profiles, and tracking logs.
+- **Tenant data isolation:** scoped Eloquent models automatically restrict authenticated queries to the current tenant (fail-closed when `tenant_id` is missing).
 - **Bitwise permission system:** permissions are stored as an integer mask for fast authorization checks.
-- **Sanctum API authentication:** login issues bearer tokens and logout revokes the current token.
-- **Strict API contracts:** feature tests validate response structures, status codes, tokens, permissions, and database side effects.
+- **Redis-backed idempotency:** mutating API endpoints require a unique `X-Idempotency-Key` header, cached for 60 seconds to prevent duplicate operations.
+- **Auth rate limiting:** public auth endpoints are throttled at 10 requests/minute per IP.
+- **Strict API contracts:** JsonResource transformers and feature tests enforce response shapes, status codes, and database side effects.
+- **Atomic shipment lifecycle:** shipment creation and initial tracking logs run inside a single database transaction with duplicate tracking-number retry.
 - **Production-minded testing:** PHPUnit plus Paratest support sequential and parallel test execution.
 - **CI-ready workflow:** GitHub Actions run formatting, static analysis, and parallel tests for pull requests.
 
 ## Tech Stack
 
-- PHP 8.3+
+- PHP 8.5 with `declare(strict_types=1)` across `app/`, `tests/`, and routes
 - Laravel 13
 - Laravel Sanctum
 - PostgreSQL
@@ -29,12 +31,13 @@ Logistics Core SaaS is a Laravel backend foundation for multi-tenant delivery, m
 
 The current backend foundation includes:
 
-- Tenants for logistics companies
-- Users with tenant membership and status control
-- Merchant profiles with pickup information
+- Tenants for logistics companies (identified by unique subdomain)
+- Users with tenant membership, privileged provisioning, and status control
+- Staff users with driver or warehouse manager permission defaults
+- Merchant profiles with pickup information and tenant isolation
 - Warehouses scoped to tenants
 - Shipments connected to merchants, drivers, warehouses, and tenants
-- Shipment logs for status transitions
+- Shipment logs for status transitions with dedicated `tenant_id`
 - Personal access tokens for API authentication
 
 ## Permission Model
@@ -56,23 +59,57 @@ Default masks:
 - Driver: `VIEW_SHIPMENT | DELIVER_SHIPMENT`
 - Warehouse: `VIEW_SHIPMENT | SORT_PACKAGES`
 
-Routes can use the permission middleware:
+Routes combine Sanctum authentication, bitwise permission middleware, and idempotency where required:
 
 ```php
-Route::middleware(['auth:sanctum', 'permission:CREATE_SHIPMENT'])->group(function () {
-    // Protected logistics endpoints
+Route::middleware(['auth:sanctum', 'idempotency'])->group(function () {
+    Route::middleware('permission:CREATE_SHIPMENT')->group(function () {
+        Route::post('/shipments', StoreShipmentController::class);
+    });
 });
 ```
 
+## Idempotency
+
+Mutating endpoints require a unique `X-Idempotency-Key` header. The middleware stores the response in Redis for 60 seconds (configurable via `IDEMPOTENCY_TTL_SECONDS`). Replayed keys with identical payloads return the cached response; mismatched payloads return `409 Conflict`.
+
+| Header | Required on | Description |
+| --- | --- | --- |
+| `X-Idempotency-Key` | Registration, staff, shipments | Client-generated unique key, max 120 characters |
+
+Response headers:
+
+| Header | Values | Description |
+| --- | --- | --- |
+| `X-Idempotency-Cache` | `MISS` / `HIT` | Whether the response was freshly processed or replayed from cache |
+
+Configuration (`.env`):
+
+```env
+IDEMPOTENCY_CACHE_STORE=redis
+IDEMPOTENCY_TTL_SECONDS=60
+IDEMPOTENCY_LOCK_SECONDS=30
+```
+
+## Rate Limiting
+
+Public auth routes use the `auth` rate limiter (10 requests/minute per IP):
+
+- `POST /api/auth/register-company`
+- `POST /api/auth/register-merchant`
+- `POST /api/auth/login`
+
 ## API Endpoints
 
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `POST` | `/api/auth/register-company` | Register a tenant company and admin user |
-| `POST` | `/api/auth/register-merchant` | Register a merchant user and merchant profile |
-| `POST` | `/api/auth/login` | Issue a Sanctum bearer token |
-| `GET` | `/api/auth/me` | Return the authenticated user |
-| `POST` | `/api/auth/logout` | Revoke the current bearer token |
+| Method | Endpoint | Auth | Permission | Idempotency Key |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/auth/register-company` | — | — | Required |
+| `POST` | `/api/auth/register-merchant` | — | — | Required |
+| `POST` | `/api/auth/login` | — | — | — |
+| `GET` | `/api/auth/me` | Bearer | — | — |
+| `POST` | `/api/auth/logout` | Bearer | — | — |
+| `POST` | `/api/staff` | Bearer | `MANAGE_TENANT` | Required |
+| `POST` | `/api/shipments` | Bearer | `CREATE_SHIPMENT` | Required |
 
 ## Quick Start
 
@@ -118,6 +155,7 @@ Register a logistics company:
 ```bash
 curl -X POST http://localhost/api/auth/register-company \
   -H "Content-Type: application/json" \
+  -H "X-Idempotency-Key: company-$(uuidgen)" \
   -d '{
     "company_name": "Acme Logistics",
     "subdomain": "acme-hub",
@@ -126,6 +164,23 @@ curl -X POST http://localhost/api/auth/register-company \
     "phone": "+15550100001",
     "password": "password-secret",
     "password_confirmation": "password-secret"
+  }'
+```
+
+Register a merchant (bound to tenant via public subdomain, not internal tenant ID):
+
+```bash
+curl -X POST http://localhost/api/auth/register-merchant \
+  -H "Content-Type: application/json" \
+  -H "X-Idempotency-Key: merchant-$(uuidgen)" \
+  -d '{
+    "tenant_subdomain": "acme-hub",
+    "name": "North Store",
+    "email": "merchant@example.com",
+    "phone": "+15550100002",
+    "password": "password-secret",
+    "store_name": "North Storefront",
+    "pickup_address": "12 Market Street"
   }'
 ```
 
@@ -147,19 +202,58 @@ curl http://localhost/api/auth/me \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
+Create a shipment (merchant token required):
+
+```bash
+curl -X POST http://localhost/api/shipments \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Idempotency-Key: shipment-$(uuidgen)" \
+  -d '{
+    "customer_name": "Customer One",
+    "customer_phone": "+970599000001",
+    "city": "Hebron",
+    "area_or_zone": "H1",
+    "detailed_address": "Main street, building 12",
+    "cod_amount": "25.5000",
+    "delivery_fees": "3.2500",
+    "weight_kg": "2.50"
+  }'
+```
+
+Onboard staff (tenant admin token required):
+
+```bash
+curl -X POST http://localhost/api/staff \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Idempotency-Key: staff-$(uuidgen)" \
+  -d '{
+    "name": "Route Driver",
+    "email": "driver@example.com",
+    "password": "password-secret",
+    "phone": "+15550100020",
+    "role_type": "driver"
+  }'
+```
+
 ## Testing Strategy
 
 The test suite covers:
 
 - Permission bit values and default masks
-- Company registration contracts and database writes
-- Merchant registration contracts and merchant profile creation
-- Duplicate identity validation
-- Login token issuance
-- Suspended user login rejection
+- Tracking number candidate generation
+- Shipment creation action atomic transaction and initial log write
+- Staff creation action tenant binding, password hashing, and default masks
+- Staff onboarding API contract (driver and warehouse manager), idempotency replay, and permission guard
+- Shipment creation API contract, tenant-scoped warehouse validation, and idempotency replay
+- Company and merchant registration contracts, subdomain binding, and idempotency replay
+- Merchant registration security (unknown subdomain rejection, ignored client `tenant_id`)
+- Duplicate identity validation and invalid login rejection
+- Login token issuance and suspended user rejection
 - Authenticated `/api/auth/me` and logout behavior
 - Permission middleware allow, deny, and developer-error paths
-- Tenant-scoped query isolation
+- Tenant-scoped query isolation for users, shipments, warehouses, and merchant profiles
 
 ## GitFlow
 
@@ -173,4 +267,4 @@ This repository follows a GitFlow-style workflow:
 
 ## Current Status
 
-The project currently provides the backend foundation for authentication, tenant-aware database structure, and authorization. Shipment creation and operational logistics workflows can now be built on top of this tested base.
+The project provides a tested backend foundation for multi-tenant authentication, staff onboarding, merchant registration, shipment creation with atomic tracking logs, Redis idempotency, auth rate limiting, and strict tenant isolation across operational models.

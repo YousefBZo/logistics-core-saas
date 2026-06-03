@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use App\Models\Scopes\TenantScope;
@@ -17,7 +19,23 @@ class User extends Authenticatable
 {
     use HasApiTokens, HasBitwisePermissions, HasFactory;
 
-    protected $fillable = ['tenant_id', 'name', 'email', 'phone', 'password', 'permissions_mask', 'status'];
+    protected $fillable = ['name', 'email', 'phone', 'password', 'status'];
+
+    /**
+     * @param  array{name: string, email: string, phone: string, password: string, status?: string}  $attributes
+     */
+    public static function provision(array $attributes, int $tenantId, int $permissionsMask): self
+    {
+        $user = new self;
+        $user->forceFill([
+            ...$attributes,
+            'tenant_id' => $tenantId,
+            'permissions_mask' => $permissionsMask,
+        ]);
+        $user->save();
+
+        return $user;
+    }
 
     protected $hidden = ['password', 'remember_token'];
 
