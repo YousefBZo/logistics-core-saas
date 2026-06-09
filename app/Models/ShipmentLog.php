@@ -18,7 +18,9 @@ class ShipmentLog extends Model
     protected $fillable = [
         'tenant_id',
         'shipment_id',
+        'action_type',
         'user_id',
+        'triggered_by',
         'status_from',
         'status_to',
         'comment',
@@ -37,5 +39,10 @@ class ShipmentLog extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function triggeredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'triggered_by');
     }
 }

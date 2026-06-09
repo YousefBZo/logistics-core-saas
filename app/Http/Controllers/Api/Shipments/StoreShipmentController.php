@@ -17,8 +17,7 @@ final class StoreShipmentController extends Controller
     public function __invoke(StoreShipmentRequest $request, CreateShipmentAction $action): JsonResponse
     {
         $tenantId = (int) $request->user()->tenant_id;
-        $merchantId = (int) $request->user()->id;
-        $shipment = $action->execute(ShipmentCreationData::fromRequest($request, $tenantId, $merchantId));
+        $shipment = $action->execute(ShipmentCreationData::fromRequest($request, $tenantId));
 
         return response()->json([
             'status' => 'success',

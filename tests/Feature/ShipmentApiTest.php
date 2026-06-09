@@ -67,7 +67,7 @@ class ShipmentApiTest extends TestCase
             ])
             ->assertJsonPath('status', 'success')
             ->assertJsonPath('message', 'Shipment created successfully.')
-            ->assertJsonPath('data.status', ShipmentStatus::PENDING->value)
+            ->assertJsonPath('data.status', ShipmentStatus::CREATED->value)
             ->assertJsonPath('data.warehouse_id', $warehouse->id)
             ->assertJsonPath('data.customer_name', 'Customer One');
 
@@ -92,7 +92,7 @@ class ShipmentApiTest extends TestCase
             'tenant_id' => $tenant->id,
             'merchant_id' => $merchant->id,
             'warehouse_id' => $warehouse->id,
-            'status' => ShipmentStatus::PENDING->value,
+            'status' => ShipmentStatus::CREATED->value,
             'customer_name' => 'Customer One',
         ]);
 
@@ -100,8 +100,10 @@ class ShipmentApiTest extends TestCase
             'tenant_id' => $tenant->id,
             'shipment_id' => $response->json('data.id'),
             'user_id' => $merchant->id,
+            'triggered_by' => $merchant->id,
+            'action_type' => ShipmentStatus::CREATED->value,
             'status_from' => ShipmentStatus::CREATED->value,
-            'status_to' => ShipmentStatus::PENDING->value,
+            'status_to' => ShipmentStatus::CREATED->value,
         ]);
 
         $visibleLogIds = ShipmentLog::query()->pluck('id')->all();
@@ -201,6 +203,108 @@ class ShipmentApiTest extends TestCase
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('warehouse_id');
+    }
+
+    public function test_shipment_creation_rejects_merchant_from_another_tenant(): void
+    {
+        $tenant = Tenant::factory()->create();
+        $admin = User::factory()->admin()->for($tenant)->create([
+            'permissions_mask' => Permission::MANAGE_TENANT->value | Permission::CREATE_SHIPMENT->value,
+        ]);
+        $otherMerchant = User::factory()->merchant()->create();
+
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/shipments', $this->validPayload([
+            'merchant_id' => $otherMerchant->id,
+        ]), [
+            'X-Idempotency-Key' => 'shipment-create-wrong-merchant',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('merchant_id');
+    }
+
+    public function test_admin_must_provide_merchant_id_when_creating_shipment(): void
+    {
+        $tenant = Tenant::factory()->create();
+        $admin = User::factory()->for($tenant)->create([
+            'permissions_mask' => Permission::MANAGE_TENANT->value | Permission::CREATE_SHIPMENT->value,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/shipments', $this->validPayload(), [
+            'X-Idempotency-Key' => 'shipment-create-admin-missing-merchant-id',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('merchant_id');
+    }
+
+    public function test_admin_can_create_on_behalf_of_merchant_within_same_tenant(): void
+    {
+        $tenant = Tenant::factory()->create();
+        $admin = User::factory()->for($tenant)->create([
+            'permissions_mask' => Permission::MANAGE_TENANT->value | Permission::CREATE_SHIPMENT->value,
+        ]);
+        $merchant = User::factory()->merchant()->for($tenant)->create();
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->postJson('/api/shipments', $this->validPayload([
+            'merchant_id' => $merchant->id,
+        ]), [
+            'X-Idempotency-Key' => 'shipment-create-admin-on-behalf',
+        ])->assertCreated();
+
+        $shipmentId = $response->json('data.id');
+
+        $this->assertDatabaseHas('shipments', [
+            'id' => $shipmentId,
+            'tenant_id' => $tenant->id,
+            'merchant_id' => $merchant->id,
+        ]);
+
+        $this->assertDatabaseHas('shipment_logs', [
+            'shipment_id' => $shipmentId,
+            'user_id' => $merchant->id,
+            'triggered_by' => $admin->id,
+        ]);
+    }
+
+    public function test_merchant_payload_merchant_id_is_ignored_to_prevent_spoofing(): void
+    {
+        $tenant = Tenant::factory()->create();
+        $merchant = User::factory()->merchant()->for($tenant)->create();
+        $otherMerchant = User::factory()->merchant()->for($tenant)->create();
+
+        Sanctum::actingAs($merchant);
+
+        $response = $this->postJson('/api/shipments', $this->validPayload([
+            'merchant_id' => $otherMerchant->id,
+        ]), [
+            'X-Idempotency-Key' => 'shipment-create-merchant-spoof-attempt',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('shipments', [
+            'id' => $response->json('data.id'),
+            'tenant_id' => $tenant->id,
+            'merchant_id' => $merchant->id,
+        ]);
+    }
+
+    public function test_shipment_creation_rejects_cod_amount_outside_precision_12_4(): void
+    {
+        $merchant = User::factory()->merchant()->create();
+
+        Sanctum::actingAs($merchant);
+
+        $this->postJson('/api/shipments', $this->validPayload([
+            'cod_amount' => '123456789.12345',
+        ]), [
+            'X-Idempotency-Key' => 'shipment-create-cod-precision',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('cod_amount');
     }
 
     /**
