@@ -11,7 +11,9 @@ Logistics Core SaaS is a Laravel backend foundation for multi-tenant delivery, m
 - **Redis-backed idempotency:** mutating API endpoints require a unique `X-Idempotency-Key` header, cached for 60 seconds to prevent duplicate operations.
 - **Auth rate limiting:** public auth endpoints are throttled at 10 requests/minute per IP.
 - **Strict API contracts:** JsonResource transformers and feature tests enforce response shapes, status codes, and database side effects.
-- **Atomic shipment lifecycle:** shipment creation and initial tracking logs run inside a single database transaction with duplicate tracking-number retry.
+- **FSM-protected shipment lifecycle:** shipment creation is initialized at `created` and guarded by a finite state machine that blocks illegal status jumps.
+- **Graph-driven lifecycle actions:** shipment/order actions follow a deterministic state graph to prevent unauthorized transition jumps.
+- **Audit-grade shipment logs:** every shipment transition is recorded with `tenant_id`, `action_type`, and `triggered_by` metadata.
 - **Production-minded testing:** PHPUnit plus Paratest support sequential and parallel test execution.
 - **CI-ready workflow:** GitHub Actions run formatting, static analysis, and parallel tests for pull requests.
 
@@ -202,7 +204,7 @@ curl http://localhost/api/auth/me \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
-Create a shipment (merchant token required):
+Create a shipment (merchant token or staff/admin token with `CREATE_SHIPMENT`):
 
 ```bash
 curl -X POST http://localhost/api/shipments \
@@ -210,6 +212,7 @@ curl -X POST http://localhost/api/shipments \
   -H "Content-Type: application/json" \
   -H "X-Idempotency-Key: shipment-$(uuidgen)" \
   -d '{
+    "merchant_id": 12,
     "customer_name": "Customer One",
     "customer_phone": "+970599000001",
     "city": "Hebron",
@@ -220,6 +223,48 @@ curl -X POST http://localhost/api/shipments \
     "weight_kg": "2.50"
   }'
 ```
+
+`merchant_id` behavior is role-aware and tenant-scoped:
+
+- Merchant actor: any provided `merchant_id` is ignored and replaced by the authenticated merchant ID (anti-spoof protection).
+- Staff/Admin actor: `merchant_id` is required and must belong to the same `tenant_id`.
+
+The `cod_amount` field is validated with precision `(12,4)`.
+
+Tracking numbers are generated in scanner-safe format: `TRK-YYYYMMDD-XXXXXX`.
+
+Allowed shipment status transitions are enforced by `ShipmentStateMachine`:
+
+- `created -> pending | cancelled`
+- `pending -> picked_up | cancelled`
+- `picked_up -> received_in_warehouse`
+- `received_in_warehouse -> out_for_delivery`
+- `out_for_delivery -> delivered | returned`
+- `returned -> received_in_warehouse`
+- `cancelled`, `delivered` are terminal states.
+
+### Order Lifecycle Action Graph
+
+```mermaid
+stateDiagram-v2
+  [*] --> created
+  created --> pending
+  created --> cancelled
+  pending --> picked_up
+  pending --> cancelled
+  picked_up --> received_in_warehouse
+  received_in_warehouse --> out_for_delivery
+  out_for_delivery --> delivered
+  out_for_delivery --> returned
+  returned --> received_in_warehouse
+```
+
+Lifecycle graph benefits:
+
+- Prevents invalid or out-of-order operational actions.
+- Makes business rules explicit and reviewable for engineering and operations teams.
+- Produces high-quality transition telemetry for SLA analytics and incident audits.
+- Simplifies extension of new actions while preserving formal transition safety.
 
 Onboard staff (tenant admin token required):
 
@@ -242,8 +287,8 @@ curl -X POST http://localhost/api/staff \
 The test suite covers:
 
 - Permission bit values and default masks
-- Tracking number candidate generation
-- Shipment creation action atomic transaction and initial log write
+- Tracking number generation (`TRK-YYYYMMDD-XXXXXX`)
+- Shipment creation action transaction, FSM guard, and initial audit log write
 - Staff creation action tenant binding, password hashing, and default masks
 - Staff onboarding API contract (driver and warehouse manager), idempotency replay, and permission guard
 - Shipment creation API contract, tenant-scoped warehouse validation, and idempotency replay

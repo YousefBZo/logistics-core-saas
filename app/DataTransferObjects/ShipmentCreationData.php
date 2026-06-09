@@ -25,11 +25,11 @@ final readonly class ShipmentCreationData
         public ?string $notes,
     ) {}
 
-    public static function fromRequest(StoreShipmentRequest $request, int $tenantId, int $merchantId): self
+    public static function fromRequest(StoreShipmentRequest $request, int $tenantId): self
     {
         return new self(
             tenantId: $tenantId,
-            merchantId: $merchantId,
+            merchantId: (int) $request->input('merchant_id'),
             warehouseId: $request->filled('warehouse_id') ? (int) $request->input('warehouse_id') : null,
             customerName: (string) $request->string('customer_name')->trim(),
             customerPhone: (string) $request->string('customer_phone')->trim(),
