@@ -44,7 +44,7 @@ final class ShipmentStateMachine
             return $to === ShipmentStatus::CREATED;
         }
 
-        $allowedTransitions = self::TRANSITIONS[$from->value] ?? [];
+        $allowedTransitions = self::TRANSITIONS[$from->value];
 
         foreach ($allowedTransitions as $allowedTransition) {
             if ($allowedTransition === $to) {

@@ -11,7 +11,7 @@ final class InvalidStatusTransitionException extends UnprocessableEntityHttpExce
 {
     public static function fromTransition(?ShipmentStatus $from, ShipmentStatus $to): self
     {
-        $fromValue = $from?->value ?? 'start';
+        $fromValue = $from->value ?? 'start';
 
         return new self(sprintf(
             'Illegal shipment status transition from "%s" to "%s".',
