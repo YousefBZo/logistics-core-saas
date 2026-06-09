@@ -50,7 +50,7 @@ final class StoreShipmentRequest extends FormRequest
             $isStaffOrAdminActor ? 'required' : 'nullable',
             'integer',
             Rule::exists('users', 'id')->where(
-                fn($query) => $query->where('tenant_id', $tenantId)
+                fn ($query) => $query->where('tenant_id', $tenantId)
             ),
         ];
 
@@ -64,7 +64,7 @@ final class StoreShipmentRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('warehouses', 'id')->where(
-                    fn($query) => $query->where('tenant_id', $tenantId)
+                    fn ($query) => $query->where('tenant_id', $tenantId)
                 ),
             ],
             'customer_name' => ['required', 'string', 'max:150'],

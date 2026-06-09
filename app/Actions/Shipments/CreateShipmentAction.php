@@ -6,11 +6,11 @@ namespace App\Actions\Shipments;
 
 use App\DataTransferObjects\ShipmentCreationData;
 use App\Enums\ShipmentStatus;
-use App\Models\User;
 use App\Models\Shipment;
 use App\Models\ShipmentLog;
-use App\Support\TrackingNumberGenerator;
+use App\Models\User;
 use App\Support\Shipments\ShipmentStateMachine;
+use App\Support\TrackingNumberGenerator;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
